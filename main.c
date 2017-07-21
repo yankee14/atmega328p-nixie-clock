@@ -27,11 +27,11 @@ void init()
     DDRB = DDRD = 0x00;
     DDRC &= 0x80;
 
-    // turn on all pins pullups,
+    // turn on all pins pullups...
     PORTB = PORTD = 0xFF;
     PORTC |= ~(0x80);
 
-    // EXCEPT for OC0A (PD6), OC1A (PB1), tri-state, protects inductor
+    // ...EXCEPT for OC0A (PD6), OC1A (PB1), protects inductor
     PORTB &= ~(1 << PORTB1);
     PORTD &= ~(1 << PORTD6);
 
@@ -47,12 +47,12 @@ void startADC0()
     // TRI-STATE ADC PIN FOR HIGH IMPEDANCE READING, NO PULLUP
     PORTC &= ~(1 << PORTC0);
 
-    /* ADC MULTIPLEXER SELECTION REGISTER (ADMUX) */
-
-    // disable digit input on ADC0 (PC0)
+    // disable digital input on ADC0 (PC0)
     DIDR0 |= (1 << ADC0D);
 
-    // use internal 1.1V reference as reference voltage
+    /* ADC MULTIPLEXER SELECTION REGISTER (ADMUX) */
+
+    // reference internal 1.1V
     ADMUX |= (1 << REFS1);
     ADMUX |= (1 << REFS0); // REFS = 0b11
 
@@ -63,7 +63,7 @@ void startADC0()
     ADMUX &= ~(1 << MUX3);
     ADMUX &= ~(1 << MUX2);
     ADMUX &= ~(1 << MUX1);
-    ADMUX &= ~(1 << MUX0);
+    ADMUX &= ~(1 << MUX0); // MUX = 0b0000
 
     /* ADC CONTROL AND STATUS REGISTER A (ADCSRA) */
 
@@ -91,12 +91,6 @@ void stopADC0()
 
     // disable the ADC
     ADCSRA &= ~(1 << ADEN);
-
-    // TRI-STATE ADC PIN FOR HIGH IMPEDANCE READING, NO PULLUP
-    PORTC |= (1 << PORTC0);
-
-    // reenable digital input on ADC0 (PC0)
-    DIDR0 &= ~(1 << ADC0D);
     
     // reset ADC prescaler to 16MHz/2
     ADCSRA &= ~(1 << ADPS2);
@@ -105,18 +99,24 @@ void stopADC0()
  
     /* ADC MULTIPLEXER SELECTION REGISTER (ADMUX) */
     
-    // AREF reference voltage
+    // reset reference voltage to AREF pin
     ADMUX &= ~(1 << REFS1);
     ADMUX &= ~(1 << REFS0); // REFS = 0b00
 
-    // right adjust conversion result, ADCH = 9:8
+    // reset right adjust conversion result, ADCH = 9:8
     ADMUX &= ~(1 << ADLAR);
 
-    // select ADC0 as input channel
+    // default ADC0 as input channel
     ADMUX &= ~(1 << MUX3);
     ADMUX &= ~(1 << MUX2);
     ADMUX &= ~(1 << MUX1);
-    ADMUX &= ~(1 << MUX0);
+    ADMUX &= ~(1 << MUX0); // MUX = 0b0000
+
+    // reset ADC pin as pullup
+    PORTC |= (1 << PORTC0);
+
+    // reenable digital input on ADC0 (PC0)
+    DIDR0 &= ~(1 << ADC0D);
 }
 
 void startTC0()
@@ -130,7 +130,7 @@ void startTC0()
     //what
     OCR0A = 0x01;
 
-    // conf Wave Generation Mode, "Fast PWM" from BOTTOM to TOP (ICR1)
+    // conf Wave Generation Mode, "Fast PWM" from BOTTOM to TOP (OCRA)
     TCCR0B |= (1 << WGM02); 
     TCCR0A |= (1 << WGM01);
     TCCR0A |= (1 << WGM00); // WGM = 0b111;
