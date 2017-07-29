@@ -1,5 +1,6 @@
 #include <avr/io.h>
 #include <avr/interrupt.h>
+#include <avr/delay.h>
 
 #define TOP 255
 #define TOGGLE TOP-225
@@ -17,6 +18,9 @@ void stopTC1();
 
 void startBMPS();
 void stopBMPS();
+
+void start595();
+void output595(uint16_t output);
 
 void init()
 {
@@ -142,7 +146,7 @@ void startTC0()
     // start timer, no prescaler
     TCCR0B |=  (1 << CS02); 
     TCCR0B &= ~(1 << CS01);
-    TCCR0B &= ~(1 << CS00); // CS0 = 0b001
+    TCCR0B &= ~(1 << CS00); // CS0 = 0b100
 
     // unleash the waveform, conf OC0A as output
     DDRD |= (1 << DDD6);
@@ -244,15 +248,77 @@ void stopBMPS()
     stopADC0(); // stop ADC
 }
 
+void start595()
+{
+    // 595 SER (PD4)
+    DDRD |= (1 << DDD4); // set PORTD4 as output
+    PORTD &= ~(1 << PORTD4); // set SER low
+
+    // 595 RCLK on PD3
+    DDRD |= (1 << DDD3); // set PORTD3 as output
+    PORTD |= (1 << PORTD3); // set RCLK high
+
+    // 595 SRCLK on PD2
+    DDRD |= (1 << DDD2); // set PORTD2 as output
+    PORTD &= ~(1 << PORTD2); // set SRCLK low
+
+    //output595(0x0000);
+}
+
+/*
+ * Takes in an unsigned 16 bit number and sends it serially to
+ * a shift register.
+ *
+ * Communicate with an SN74HC595 shift register using 3 AVR pins:
+ * 
+ * SER on the 595 is on PD4
+ * SRCLK on the 595 is PD3
+ * SCLK on the 595 is on PD2
+ *
+ * SER bit twiddle modified from:
+ * https://graphics.stanford.edu/~seander/bithacks.html
+ */
+void output595(uint16_t output)
+{
+    PORTD &= ~(1 << PORTD3); // bring SCLK low
+    
+    for(uint8_t i = 16; i; --i) // each bit in the vector
+    {
+        // SER 595 data to be shifted in
+        PORTD ^= (-(output & 0x0001) ^ PORTD) & (1 << PORTD4);
+
+        PORTD |= (1 << PORTD2); // SRCLK 595 high, shift in SER data
+        output >>= 1; // move next bit, introduce clock delay
+        PORTD &= ~(1 << PORTD2); // SRCLK 595 low
+    }
+
+    PORTD |= ~(1 << PORTD4); // move to storage register, SCLK high
+}
+
+void stop595()
+{
+    // zero out shift register
+    output595(0x0000);
+
+    // SER 595 low
+    PORTD &=  ~(1 << PORTD4);
+
+    // SRCLK and SCLK 595 high
+    PORTD |= (1 << PORTD3) | (1 << PORTD2);
+}
+
 int main(void)
 {
     init();
 
-    startBMPS();
+    //startBMPS();
+    
+    start595();
 
-    for(;;);
-
-    stopBMPS();
+    for(;;){
+    output595(0xAAAA);
+    output595(0x5555);
+    }
 
 // TODO consider ADC trigger from TC2 overflow
     return 0;
@@ -261,7 +327,7 @@ int main(void)
 /* Must check voltage AND duty! */
 ISR(ADC_vect)
 {
-    const unsigned char adc = ADCH; // 34 rep 10V
+    const uint8_t adc = ADCH; // 34 rep 10V
 
     if(adc > 14){
         if(OCR1A > TOP - 229){ // do not increase duty beyond 90%
