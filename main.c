@@ -1,6 +1,5 @@
 #include <avr/io.h>
 #include <avr/interrupt.h>
-#include <avr/delay.h>
 
 #define TOP 255
 #define TOGGLE TOP-225
@@ -272,8 +271,8 @@ void start595()
  * Communicate with an SN74HC595 shift register using 3 AVR pins:
  * 
  * SER on the 595 is on PD4
- * SRCLK on the 595 is PD3
- * SCLK on the 595 is on PD2
+ * SCLK on the 595 is PD3
+ * SRCLK on the 595 is on PD2
  *
  * SER bit twiddle modified from:
  * https://graphics.stanford.edu/~seander/bithacks.html
@@ -304,7 +303,13 @@ void stop595()
     PORTD &=  ~(1 << PORTD4);
 
     // SRCLK and SCLK 595 high
-    PORTD |= (1 << PORTD3) | (1 << PORTD2);
+    PORTD |=  (1 << PORTD3) | (1 << PORTD2);
+
+    // SER 595 high
+    PORTD |=  (1 << PORTD4);
+
+    // all as inputs
+    DDRD &= ~( (1 << PORTD4) | (1 << PORTD3) | (1 << PORTD2) );
 }
 
 int main(void)
