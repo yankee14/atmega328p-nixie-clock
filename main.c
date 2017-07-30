@@ -285,7 +285,7 @@ void output595(uint16_t output)
     for(uint8_t i = 16; i; --i) // each bit in the vector
     {
         // SER 595 data to be shifted in
-        PORTD ^= (-(output & 0x0001) ^ PORTD) & (1 << PORTD4);
+        PORTD ^= ((~(output & 0x0001) + 0x0001) ^ PORTD) & (1 << PORTD4);
 
         PORTD |= (1 << PORTD2); // SRCLK 595 high, shift in SER data
         output >>= 1; // move next bit, introduce clock delay
