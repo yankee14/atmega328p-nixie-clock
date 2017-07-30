@@ -1,5 +1,6 @@
 #include <avr/io.h>
 #include <avr/interrupt.h>
+#include <util/delay.h>
 
 #define TOP 255
 #define TOGGLE TOP-225
@@ -291,7 +292,7 @@ void output595(uint16_t output)
         PORTD &= ~(1 << PORTD2); // SRCLK 595 low
     }
 
-    PORTD |= (1 << PORTD4); // move to storage register, SCLK high
+    PORTD |= (1 << PORTD3); // move to storage register, SCLK high
 }
 
 void stop595()
@@ -321,8 +322,10 @@ int main(void)
     start595();
 
     for(;;){
-    output595(0xAAAA);
-    output595(0x5555);
+        output595(0xAAAA);
+        _delay_ms(1000);
+        output595(0x5555);
+        _delay_ms(1000);
     }
 
 // TODO consider ADC trigger from TC2 overflow
