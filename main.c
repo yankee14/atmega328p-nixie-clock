@@ -291,7 +291,7 @@ void output595(uint16_t output)
         PORTD &= ~(1 << PORTD2); // SRCLK 595 low
     }
 
-    PORTD |= ~(1 << PORTD4); // move to storage register, SCLK high
+    PORTD |= (1 << PORTD4); // move to storage register, SCLK high
 }
 
 void stop595()
