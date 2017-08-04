@@ -26,7 +26,7 @@ AVRDUDE_BAUD = 115200
 
 # Which optimization setting should the compiler use?
 # See: https://gcc.gnu.org/onlinedocs/gcc-4.8.1/gcc/Optimize-Options.html
-OPTIMIZATION_LEVEL = fast
+OPTIMIZATION_LEVEL = s
 
 ###################################################################
 ###################################################################

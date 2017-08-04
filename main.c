@@ -5,8 +5,7 @@
 #include <avr/io.h>
 #include <avr/interrupt.h>
 
-#define TOP 63
-#define TOGGLE TOP-21
+#define TOP_TC0 99
 
 void init();
 
@@ -46,7 +45,7 @@ void init()
     PORTD &= ~(1 << PORTD5);
 
     // globally enable interrupts in SREG
-    //sei();
+    sei();
 
     // master reenable all pullups
     MCUCR &= ~(1 << PUD);
@@ -55,10 +54,10 @@ void init()
 void startADC0()
 {
     // TRI-STATE ADC PIN FOR HIGH IMPEDANCE READING, NO PULLUP
-    PORTC &= ~(1 << PORTC0);
+    PORTC &= ~(1 << PORTC5);
 
     // disable digital input on ADC0 (PC0)
-    DIDR0 |= (1 << ADC0D);
+    DIDR0 |= (1 << ADC5D);
 
     /* ADC MULTIPLEXER SELECTION REGISTER (ADMUX) */
 
@@ -66,14 +65,17 @@ void startADC0()
     ADMUX |= (1 << REFS1);
     ADMUX |= (1 << REFS0); // REFS = 0b11
 
-    // left adjust conversion result, ADCH = 9:2
-    ADMUX |= (1 << ADLAR);
+    //// left adjust conversion result, ADCH = 9:2
+    //ADMUX |= (1 << ADLAR);
 
-    // select ADC0 as input channel
+    // right adjust conversion result, ADCH = 10:8
+    ADMUX &= ~(1 << ADLAR);
+
+    // select ADC5 as input channel
     ADMUX &= ~(1 << MUX3);
-    ADMUX &= ~(1 << MUX2);
+    ADMUX |=  (1 << MUX2);
     ADMUX &= ~(1 << MUX1);
-    ADMUX &= ~(1 << MUX0); // MUX = 0b0000
+    ADMUX |=  (1 << MUX0); // MUX = 0b0101
 
     /* ADC CONTROL AND STATUS REGISTER A (ADCSRA) */
 
@@ -123,24 +125,24 @@ void stopADC0()
     ADMUX &= ~(1 << MUX0); // MUX = 0b0000
 
     // reset ADC pin as pullup
-    PORTC |= (1 << PORTC0);
+    PORTC |= (1 << PORTC5);
 
     // reenable digital input on ADC0 (PC0)
-    DIDR0 &= ~(1 << ADC0D);
+    DIDR0 &= ~(1 << ADC5D);
 }
 
 void startTC0()
 {
-    // set PWM pin tri-state
+    // set PWM pin OC0B tri-state
     PORTD &= ~(1 << PORTD5);
     
-    // set PWM pin as input
+    // set PWM pin OC0B as input
     DDRD &= ~(1 << DDD5);
 
-    // Wave Generation Mode, "Fast PWM" from BOTTOM to TOP (OCRA)
+    // Wave Generation Mode, "Fast PWM" from BOTTOM to TOP_TC0 (OCRA)
     TCCR0B |=  (1 << WGM02); 
     TCCR0A |=  (1 << WGM01);
-    TCCR0A |=  (1 << WGM00); // WGM = 0b111
+    TCCR0A |=  (1 << WGM00); // WGM0 = 0b111
 
     // Comp Output Mode - Chan A, "Normal Port Op, 0C0A discon"
     TCCR0A &= ~(1 << COM0A1);
@@ -155,13 +157,13 @@ void startTC0()
     TCCR0B &= ~(1 << CS01);
     TCCR0B |=  (1 << CS00); // CS0 = 0b001
 
-    // TOP value, sets period
-    OCR0A = TOP;
+    // TOP_TC0 value, sets period
+    OCR0A = TOP_TC0;
 
-    // TOGGLE value, PWM goes high at this value
-    OCR0B = TOGGLE;
+    // default 0% duty, PWM goes high at this value
+    OCR0B = TOP_TC0;
 
-    // unleash the waveform, conf OC0B as output
+    // unleash the waveform, set PWM pin OC0B as output
     DDRD |=  (1 << DDD5);
 }
 
@@ -178,7 +180,7 @@ void stopTC0()
     TCCR0B &= ~(1 << CS01);
     TCCR0B &= ~(1 << CS00); // CS0 = 0b000
 
-    // conf Waveform Generation Mode, Normal
+    // Wave Generation Mode, Normal
     TCCR0B &= ~(1 << WGM02); 
     TCCR0A &= ~(1 << WGM01);
     TCCR0A &= ~(1 << WGM00); // WGM = 0b000;
@@ -194,37 +196,44 @@ void stopTC0()
 
 void startTC1()
 {
-    // set PWM pin tri-state
+    // set PWM pins tri-state
     PORTB &= ~(1 << PORTB1);
     
     // set PWM pin as input
     DDRB &= ~(1 << DDB1);
 
-    // TODO change these two
     // set the period, last number before rolling to 0x0000
-    ICR1 = TOP;
+    //ICR1 = 0x0FFF;
 
     // set the duty cycle, number to set pulse high
     // NOTE duty cycle is backwards, e.g. OCR1A = 0 means 100% duty
-    OCR1A = TOP;
+    OCR1A = 0;
 
-    // conf Wave Generation Mode, "Fast PWM" from BOTTOM to TOP (ICR1)
-    TCCR1B |= (1 << WGM13);
-    TCCR1B |= (1 << WGM12); 
-    TCCR1A |= (1 << WGM11);
-    TCCR1A &= ~(1 << WGM10); // WGM = 0b1110;
+    // set
+    OCR1B = 0;
 
-    // conf Comp Output Mode, "Clear OC1A on Compare Match"
-    TCCR1A |= (1 << COM1A1);
-    TCCR1A |= (1 << COM1A0); // COM1 = 0b10
+    // Wave Generation Mode, "PCPWM, 8-bit"
+    TCCR1B |=  (1 << WGM13);
+    TCCR1B |=  (1 << WGM12); 
+    TCCR1A |=  (1 << WGM11);
+    TCCR1A &= ~(1 << WGM10); // WGM1 = 0b1110;
 
-    // start timer, no prescaler
+    // Comp Output Mode - Chan A, "Clear OC1A on Compare Match"
+    TCCR1A |=  (1 << COM1A1);
+    TCCR1A &= ~(1 << COM1A0); // COM1A = 0b10
+
+    // Comp Output Mode - Chan B, "Set OC1B on Compare Match"
+    TCCR1A |=  (1 << COM1B1);
+    TCCR1A |=  (1 << COM1B0); // COM1B = 0b11
+
+    // start timer, prescaler F_osc/8
     TCCR1B &= ~(1 << CS12); 
-    //TCCR1B &= ~(1 << CS11); // datasheet entry missing for CS11?
-    TCCR1B |= (1 << CS10); // CS0 = 0b001
+    TCCR1B |=  (1 << CS11); // datasheet entry missing for CS11?
+    TCCR1B &= ~(1 << CS10); // CS1 = 0b010
 
-    // unleash the waveform, conf OC0A as output
-    DDRB |= (1 << DDB1);
+    // unleash the waveform, set PWM pins OC1A and OC1B as output
+    DDRB |=  (1 << DDB1);
+    DDRB |=  (1 << DDB2);
 }
 
 void stopTC1()
@@ -265,13 +274,13 @@ void startBoost()
 {
     startADC0(); // start monitoring boost outut voltage
     startTC0(); // start pulsing inductor
-    startTC1(); // start multiplier switching
+    //startTC1(); // start multiplier switching
 }
 
 void stopBoost()
 {
     stopTC0(); // stop pulsing inductor
-    stopTC1(); // stop multiplier switching
+    //stopTC1(); // stop multiplier switching
     stopADC0(); // stop monitoring boost output voltage
 }
 
@@ -345,31 +354,40 @@ int main(void)
 {
     init();
 
+    start595();
+ 
     startBoost();
 
-    start595();
-
     for(;;);
-
+    
     // TODO consider ADC trigger from TC2 overflow
     return 0;
 }
 
-/* Must check voltage AND duty! */
-//ISR(ADC_vect)
-//{
-//    const uint8_t adc = ADCH; // 34 rep 10V
-//
-//    if(adc > 14){
-//        if(OCR0A > TOP - 1){ // do not increase duty beyond 90%
-//            if(adc > 1) // if voltage too high
-//                OCR0B++; // decrease duty
-//            else if(adc < 1) // if voltage too low
-//                OCR0B--; // increase duty
-//        } else if(OCR0B != 1)
-//            OCR0B++;
-//    }
-//    
-//    ADCSRA |= (1 << ADSC); // start next sample
-//}
+/* 
+ * Boost converter should sit at maximum allowed duty until duty needs
+ * decreasing.
+ *
+ * ISR doesn't really need all 10 bits, but the overhead helps to
+ * ensure the ISR takes slightly longer.
+ *
+ * V_boost = ADC/(TOP_TC0 + 1)*1.1V*(1kohm + 47kohm)/(1kohm)
+ *
+ * Must check voltage AND duty! 
+ */
+ISR(ADC_vect)
+{
+    const uint16_t adc = ADC;
+
+    if(adc < 800){      // if under maximum allowable voltage
+        if((OCR0B > 9) && (adc < 700))
+            OCR0B--;
+        else if((OCR0B < TOP_TC0) && (adc > 700))
+            OCR0B++;
+    }
+    else                // otherwise
+        OCR0B = TOP_TC0; // set duty 0% this round
+
+    ADCSRA |= (1 << ADSC); // start next sample
+}
 
