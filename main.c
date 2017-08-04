@@ -9,8 +9,8 @@
 
 void init();
 
-void startADC0();
-void stopADC0();
+void startADC5();
+void stopADC5();
 
 void startTC0();
 void stopTC0();
@@ -51,12 +51,12 @@ void init()
     MCUCR &= ~(1 << PUD);
 }
 
-void startADC0()
+void startADC5()
 {
     // TRI-STATE ADC PIN FOR HIGH IMPEDANCE READING, NO PULLUP
     PORTC &= ~(1 << PORTC5);
 
-    // disable digital input on ADC0 (PC0)
+    // disable digital input on ADC5 (PC5)
     DIDR0 |= (1 << ADC5D);
 
     /* ADC MULTIPLEXER SELECTION REGISTER (ADMUX) */
@@ -64,9 +64,6 @@ void startADC0()
     // reference internal 1.1V
     ADMUX |= (1 << REFS1);
     ADMUX |= (1 << REFS0); // REFS = 0b11
-
-    //// left adjust conversion result, ADCH = 9:2
-    //ADMUX |= (1 << ADLAR);
 
     // right adjust conversion result, ADCH = 10:8
     ADMUX &= ~(1 << ADLAR);
@@ -94,7 +91,7 @@ void startADC0()
     ADCSRA |= (1 << ADSC);
 }
 
-void stopADC0()
+void stopADC5()
 {
     /* ADC CONTROL AND STATUS REGISTER A (ADCSRA) */
 
@@ -127,7 +124,7 @@ void stopADC0()
     // reset ADC pin as pullup
     PORTC |= (1 << PORTC5);
 
-    // reenable digital input on ADC0 (PC0)
+    // reenable digital input on ADC5 (PC5)
     DIDR0 &= ~(1 << ADC5D);
 }
 
@@ -272,7 +269,7 @@ void stopTC2()
 
 void startBoost()
 {
-    startADC0(); // start monitoring boost outut voltage
+    startADC5(); // start monitoring boost outut voltage
     startTC0(); // start pulsing inductor
     //startTC1(); // start multiplier switching
 }
@@ -281,7 +278,7 @@ void stopBoost()
 {
     stopTC0(); // stop pulsing inductor
     //stopTC1(); // stop multiplier switching
-    stopADC0(); // stop monitoring boost output voltage
+    stopADC5(); // stop monitoring boost output voltage
 }
 
 void start595()
