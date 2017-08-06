@@ -128,6 +128,9 @@ void stopADC5()
     DIDR0 &= ~(1 << ADC5D);
 }
 
+/*
+ * TC0 
+ */
 void startTC0()
 {
     // set PWM pin OC0B tri-state
@@ -191,29 +194,29 @@ void stopTC0()
     TCCR0A &= ~(1 << COM0B0); // COM0B = 0b00
 }
 
+/*
+ *
+ */
 void startTC1()
 {
-    // set PWM pins tri-state
+    // set PWM pins tri-state, OC1A (PB1) and OC1B (PB2)
     PORTB &= ~(1 << PORTB1);
+    PORTB &= ~(1 << PORTB2);
     
-    // set PWM pin as input
+    // set PWM pins as inputs, OC1A (PB1) and OC1B (PB2)
     DDRB &= ~(1 << DDB1);
 
-    // set the period, last number before rolling to 0x0000
-    //ICR1 = 0x0FFF;
-
-    // set the duty cycle, number to set pulse high
-    // NOTE duty cycle is backwards, e.g. OCR1A = 0 means 100% duty
-    OCR1A = 0;
+    // clear
+    OCR1A = 0x60;
 
     // set
-    OCR1B = 0;
+    OCR1B = 0xA0;
 
     // Wave Generation Mode, "PCPWM, 8-bit"
-    TCCR1B |=  (1 << WGM13);
-    TCCR1B |=  (1 << WGM12); 
-    TCCR1A |=  (1 << WGM11);
-    TCCR1A &= ~(1 << WGM10); // WGM1 = 0b1110;
+    TCCR1B &= ~(1 << WGM13);
+    TCCR1B &= ~(1 << WGM12); 
+    TCCR1A &= ~(1 << WGM11);
+    TCCR1A |=  (1 << WGM10); // WGM1 = 0b0001;
 
     // Comp Output Mode - Chan A, "Clear OC1A on Compare Match"
     TCCR1A |=  (1 << COM1A1);
@@ -225,8 +228,8 @@ void startTC1()
 
     // start timer, prescaler F_osc/8
     TCCR1B &= ~(1 << CS12); 
-    TCCR1B |=  (1 << CS11); // datasheet entry missing for CS11?
-    TCCR1B &= ~(1 << CS10); // CS1 = 0b010
+    TCCR1B &= ~(1 << CS11); // datasheet entry missing for CS11?
+    TCCR1B |=  (1 << CS10); // CS1 = 0b010
 
     // unleash the waveform, set PWM pins OC1A and OC1B as output
     DDRB |=  (1 << DDB1);
@@ -271,13 +274,13 @@ void startBoost()
 {
     startADC5(); // start monitoring boost outut voltage
     startTC0(); // start pulsing inductor
-    //startTC1(); // start multiplier switching
+    startTC1(); // start multiplier switching
 }
 
 void stopBoost()
 {
     stopTC0(); // stop pulsing inductor
-    //stopTC1(); // stop multiplier switching
+    stopTC1(); // stop multiplier switching
     stopADC5(); // stop monitoring boost output voltage
 }
 
@@ -376,15 +379,15 @@ ISR(ADC_vect)
 {
     const uint16_t adc = ADC;
 
-    if(adc < 800){      // if under maximum allowable voltage
-        if((OCR0B > 9) && (adc < 700))
-            OCR0B--;
-        else if((OCR0B < TOP_TC0) && (adc > 700))
-            OCR0B++;
+    if(adc < 800){// if under maximum allowable voltage
+        if((OCR0B > 9) && (adc < 700)) // if duty lt 90% && V < 36
+            OCR0B--;// raise the duty cycle 
+        else if((OCR0B < TOP_TC0) && (adc > 700)) // otherwise
+            OCR0B++;// lower the duty cycle
     }
-    else                // otherwise
-        OCR0B = TOP_TC0; // set duty 0% this round
+    else                    // otherwise
+        OCR0B = TOP_TC0;        // set duty 0% this round
 
-    ADCSRA |= (1 << ADSC); // start next sample
+    ADCSRA |= (1 << ADSC);  // start next sample
 }
 
