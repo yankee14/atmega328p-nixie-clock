@@ -4,30 +4,40 @@
 
 #include <avr/io.h>
 #include <avr/interrupt.h>
+#include <util/atomic.h>
+#include <time.h>
+#include <util/delay.h>
 
 #define TOP_TC0 99
+#define TOP_TC2 155
 
-void init();
+static void init();
 
-void startADC5();
-void stopADC5();
+static void startADC5();
+static void stopADC5();
 
-void startTC0();
-void stopTC0();
+static void startTC0();
+static void stopTC0();
 
-void startTC1();
-void stopTC1();
+static void startTC1();
+static void stopTC1();
 
-void startTC2();
-void stopTC2();
+static void startTC2();
+static void stopTC2();
 
-void startBoost();
-void stopBoost();
+static void start595();
+static void output595(uint16_t output);
 
-void start595();
-void output595(uint16_t output);
+static void startBoost();
+static void stopBoost();
 
-void init()
+static time_t timeKeeper;
+struct tm* timeKeeperStruct;
+static volatile uint8_t centiSeconds = 99;
+static void startRTC();
+static void stopRTC();
+
+static void init()
 {
     // MASTER tri-state all pins during init, protects inductor
     MCUCR |= (1 << PUD); 
@@ -51,19 +61,17 @@ void init()
     MCUCR &= ~(1 << PUD);
 }
 
-void startADC5()
+static void startADC5()
 {
     // TRI-STATE ADC PIN FOR HIGH IMPEDANCE READING, NO PULLUP
     PORTC &= ~(1 << PORTC5);
 
     // disable digital input on ADC5 (PC5)
-    DIDR0 |= (1 << ADC5D);
-
-    /* ADC MULTIPLEXER SELECTION REGISTER (ADMUX) */
+    DIDR0 |=  (1 << ADC5D);
 
     // reference internal 1.1V
-    ADMUX |= (1 << REFS1);
-    ADMUX |= (1 << REFS0); // REFS = 0b11
+    ADMUX |=  (1 << REFS1);
+    ADMUX |=  (1 << REFS0); // REFS = 0b11
 
     // right adjust conversion result, ADCH = 10:8
     ADMUX &= ~(1 << ADLAR);
@@ -74,40 +82,47 @@ void startADC5()
     ADMUX &= ~(1 << MUX1);
     ADMUX |=  (1 << MUX0); // MUX = 0b0101
 
-    /* ADC CONTROL AND STATUS REGISTER A (ADCSRA) */
-
     // set ADC prescaler to 16MHz/128 = 125kHz
-    ADCSRA |= (1 << ADPS2);
-    ADCSRA |= (1 << ADPS1);
-    ADCSRA |= (1 << ADPS0); // ADPS = 0b111
+    ADCSRA |=  (1 << ADPS2);
+    ADCSRA |=  (1 << ADPS1);
+    ADCSRA |=  (1 << ADPS0); // ADPS = 0b111
 
     // enable ADC interrupts
-    ADCSRA |= (1 << ADIE);
+    ADCSRA |=  (1 << ADIE);
+
+    // ADC Auto Trigger Source, "Timer/Counter 0 Compare Match A"
+    ADCSRB &= ~(1 << ADTS2);
+    ADCSRB |=  (1 << ADTS1);
+    ADCSRB |=  (1 << ADTS0); // ADTS = 0b011
+
+    // enable ADC auto triggering
+    ADCSRA |=  (1 << ADATE);
 
     // enable the ADC
-    ADCSRA |= (1 << ADEN);
-
-    // start sampling
-    ADCSRA |= (1 << ADSC);
+    ADCSRA |=  (1 << ADEN);
 }
 
-void stopADC5()
+static void stopADC5()
 {
-    /* ADC CONTROL AND STATUS REGISTER A (ADCSRA) */
-
     // disable ADC interrupts
     ADCSRA &= ~(1 << ADIE);
 
     // disable the ADC
     ADCSRA &= ~(1 << ADEN);
-    
+
+    // disable ADC auto triggering
+    ADCSRA &= ~(1 << ADATE);
+
+    // default ADC Auto Trigger Source, "Free Running Mode"
+    ADCSRB &= ~(1 << ADTS2);
+    ADCSRB &= ~(1 << ADTS1);
+    ADCSRB &= ~(1 << ADTS0);
+
     // reset ADC prescaler to 16MHz/2
     ADCSRA &= ~(1 << ADPS2);
     ADCSRA &= ~(1 << ADPS1);
     ADCSRA &= ~(1 << ADPS0); // ADPS = 0b000
  
-    /* ADC MULTIPLEXER SELECTION REGISTER (ADMUX) */
-    
     // reset reference voltage to AREF pin
     ADMUX &= ~(1 << REFS1);
     ADMUX &= ~(1 << REFS0); // REFS = 0b00
@@ -131,7 +146,7 @@ void stopADC5()
 /*
  * TC0 
  */
-void startTC0()
+static void startTC0()
 {
     // set PWM pin OC0B tri-state
     PORTD &= ~(1 << PORTD5);
@@ -167,7 +182,7 @@ void startTC0()
     DDRD |=  (1 << DDD5);
 }
 
-void stopTC0()
+static void stopTC0()
 {
     // set PWM pin tri-state
     PORTD &= ~(1 << PORTD5);
@@ -192,12 +207,16 @@ void stopTC0()
     // Comp Output Mode - B-chan, "Norman Port Op, 0C0B discon"
     TCCR0A &= ~(1 << COM0B1);
     TCCR0A &= ~(1 << COM0B0); // COM0B = 0b00
+
+    // default "Output Compare Register" values
+    OCR0A = 0x00;
+    OCR0B = 0x00;
 }
 
 /*
  *
  */
-void startTC1()
+static void startTC1()
 {
     // set PWM pins tri-state, OC1A (PB1) and OC1B (PB2)
     PORTB &= ~(1 << PORTB1);
@@ -236,7 +255,7 @@ void startTC1()
     DDRB |=  (1 << DDB2);
 }
 
-void stopTC1()
+static void stopTC1()
 {
     // set PWM pin tri-state
     PORTB &= ~(1 << PORTB1);
@@ -260,31 +279,74 @@ void stopTC1()
     TCCR1A &= ~(1 << COM1A0); // COM0A = 0b00
 }
 
-void startTC2()
+static void startTC2()
 {
+    /* CONFIGURE INTERRUPTS */
 
+    // TC2 Interrupt Mask Register, "ISR on Compare Match A (OCR2A)"
+    TIMSK2 &= ~(1 << OCIE2B);
+    TIMSK2 |=  (1 << OCIE2A);
+    TIMSK2 &= ~(1 << TOIE2); // TIMSK2 = 0b010
+
+    /* CONFIGURE TIMER/COUNTER 2 */
+
+    // Wave Generation Mode, "CTC" BOTTOM to TOP_TC2 (OCR2A)
+    TCCR2B &= ~(1 << WGM22);
+    TCCR2A |=  (1 << WGM21);
+    TCCR2A &= ~(1 << WGM20); // WGM0 = 0b010
+
+    // Comp Output Mode - Chan A, "Normal Port Op, 0C2A discon"
+    TCCR2A &= ~(1 << COM2A1);
+    TCCR2A &= ~(1 << COM2A0); // COM0A = 0b00
+
+    // Comp Output Mode - Chan B, "Normal Port Op, OC2B discon"
+    TCCR2A &= ~(1 << COM2B1);
+    TCCR2A &= ~(1 << COM2B0); // COM0B = 0b00
+
+    // TOP_TC2 value, sets period 100.1Hz (assuming 1024 prescaler)
+    OCR2A = TOP_TC2;
+
+    // start timer, prescaler F_osc/1024
+    TCCR2B |=  (1 << CS22);
+    TCCR2B |=  (1 << CS21);
+    TCCR2B |=  (1 << CS20); // CS2 = 0b111
 }
 
-void stopTC2()
+static void stopTC2()
 {
+    /* DISABLE INTERRUPTS */
 
+    // turn off TC2 ISRs
+    TIMSK2 &= ~(1 << OCIE2B);
+    TIMSK2 &= ~(1 << OCIE2A);
+    TIMSK2 &= ~(1 << TOIE2); // TIMSK2 = 0b000
+
+    /* DEFAULT SETTINGS TIMER/COUNTER 2 */
+
+    // stop timer, disable clock source
+    TCCR2B |=  (1 << CS22);
+    TCCR2B |=  (1 << CS21);
+    TCCR2B |=  (1 << CS20); // CS2 = 0b111
+
+    // Wave Generation Mode, "Normal"
+    TCCR2B &= ~(1 << WGM22);
+    TCCR2A |=  (1 << WGM21);
+    TCCR2A &= ~(1 << WGM20); // WGM0 = 0b000
+
+    // Comp Output Mode - Chan A, "Normal Port Op, 0C2A discon"
+    TCCR2A &= ~(1 << COM2A1);
+    TCCR2A &= ~(1 << COM2A0); // COM0A = 0b00
+
+    // Comp Output Mode - Chan B, "Normal Port Op, OC2B discon"
+    TCCR2A &= ~(1 << COM2B1);
+    TCCR2A &= ~(1 << COM2B0); // COM0B = 0b00
+
+    // default "Output Compare Register" Values
+    OCR2A = 0x00;
+    OCR2B = 0x00;
 }
 
-void startBoost()
-{
-    startADC5(); // start monitoring boost outut voltage
-    startTC0(); // start pulsing inductor
-    startTC1(); // start multiplier switching
-}
-
-void stopBoost()
-{
-    stopTC0(); // stop pulsing inductor
-    stopTC1(); // stop multiplier switching
-    stopADC5(); // stop monitoring boost output voltage
-}
-
-void start595()
+static void start595()
 {
     // 595 SER (PD4)
     DDRD |= (1 << DDD4); // set PORTD4 as output
@@ -315,7 +377,7 @@ void start595()
  * SER bit twiddle modified from:
  * https://graphics.stanford.edu/~seander/bithacks.html
  */
-void output595(uint16_t output)
+static void output595(uint16_t output)
 {
     PORTD &= ~(1 << PORTD3); // bring SCLK low
     
@@ -332,7 +394,7 @@ void output595(uint16_t output)
     PORTD |= (1 << PORTD3); // move to storage register, SCLK high
 }
 
-void stop595()
+static void stop595()
 {
     // zero out shift register
     output595(0x0000);
@@ -350,16 +412,49 @@ void stop595()
     DDRD &= ~( (1 << PORTD4) | (1 << PORTD3) | (1 << PORTD2) );
 }
 
+static void startBoost()
+{
+    startADC5(); // start monitoring boost outut voltage
+    startTC0(); // start pulsing inductor
+    startTC1(); // start multiplier switching
+}
+
+static void stopBoost()
+{
+    stopTC0(); // stop pulsing inductor
+    stopTC1(); // stop multiplier switching
+    stopADC5(); // stop monitoring boost output voltage
+}
+
+static void startRTC()
+{
+    set_system_time(1502281102 - UNIX_OFFSET);
+    set_zone(-6 * ONE_HOUR);
+
+    start595();
+    startTC2();
+}
+
+static void stopRTC()
+{
+    stopTC2();
+    stop595();
+}
+
 int main(void)
 {
     init();
 
-    start595();
- 
     startBoost();
+    startRTC();
 
-    for(;;);
+    for(; ; ){
+        output595( (*timeKeeperStruct).tm_sec);
+    }
     
+    stopBoost();
+    stopRTC();
+
     // TODO consider ADC trigger from TC2 overflow
     return 0;
 }
@@ -380,14 +475,25 @@ ISR(ADC_vect)
     const uint16_t adc = ADC;
 
     if(adc < 800){// if under maximum allowable voltage
-        if((OCR0B > 9) && (adc < 700)) // if duty lt 90% && V < 36
+        if((OCR0B > 9) && (adc < 650)) // if duty lt 90% && V < 36
             OCR0B--;// raise the duty cycle 
-        else if((OCR0B < TOP_TC0) && (adc > 700)) // otherwise
+        else if((OCR0B < TOP_TC0) && (adc > 650)) // otherwise
             OCR0B++;// lower the duty cycle
     }
     else                    // otherwise
         OCR0B = TOP_TC0;        // set duty 0% this round
 
-    ADCSRA |= (1 << ADSC);  // start next sample
+    // clear Timer/Counter 0 Output Compare A Match Flag
+    TIFR0 |= (OCR0B);
+}
+
+ISR(TIMER2_COMPA_vect)
+{
+    if(!--centiSeconds) {
+        centiSeconds = 99;
+        system_tick(); // called at 1 Hz
+        time(&timeKeeper);
+        timeKeeperStruct = localtime(&timeKeeper);
+    }
 }
 
