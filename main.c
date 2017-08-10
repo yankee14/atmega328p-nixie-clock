@@ -6,10 +6,15 @@
 #include <avr/interrupt.h>
 #include <util/atomic.h>
 #include <time.h>
+#include <util/usa_dst.h> //TODO rewrite
 #include <util/delay.h>
 
 #define TOP_TC0 99
 #define TOP_TC2 155
+
+#define NIXIE_TUBE_COUNT 8
+#define NIXIE_ON_TIME_US 100000
+#define NIXIE_DEAD_TIME_US 200000
 
 static void init();
 
@@ -26,14 +31,15 @@ static void startTC2();
 static void stopTC2();
 
 static void start595();
-static void output595(uint16_t output);
+static void output595(__uint24 output);
 
 static void startBoost();
 static void stopBoost();
 
+static volatile uint8_t timeAvailable;
 static time_t timeKeeper;
-struct tm* timeKeeperStruct;
-static volatile uint8_t centiSeconds = 99;
+static volatile struct tm* timeKeeperStruct;
+static volatile uint8_t centiSeconds;
 static void startRTC();
 static void stopRTC();
 
@@ -144,14 +150,24 @@ static void stopADC5()
 }
 
 /*
- * TC0 
+ * Timer/Counter 0 is using PWM on pin OC0B (PD5) to drive the gate of
+ * an N-channel MOSFET in a switched-mode power supply.
+ *
+ * From TCNT0 = [0, OCR0B - 1], OC0B drives low.
+ * From TCNT0 = [OCR0B, TOP_TC0], OC0B drives high.
+ *
+ * The frequency is set by the value in OCR0A and the prescaler.
+ * The duty cycle is set by the value in OCR0B.
+ *
+ * The duty cycle (OCR0B) is adjusted by the ADC ISR once per TC0
+ * period.
  */
 static void startTC0()
 {
     // set PWM pin OC0B tri-state
     PORTD &= ~(1 << PORTD5);
     
-    // set PWM pin OC0B as input
+    // set PWM pin OC0B as input during config
     DDRD &= ~(1 << DDD5);
 
     // Wave Generation Mode, "Fast PWM" from BOTTOM to TOP_TC0 (OCRA)
@@ -208,9 +224,10 @@ static void stopTC0()
     TCCR0A &= ~(1 << COM0B1);
     TCCR0A &= ~(1 << COM0B0); // COM0B = 0b00
 
-    // default "Output Compare Register" values
+    // default timer registers
     OCR0A = 0x00;
     OCR0B = 0x00;
+    TCNT0 = 0x00;
 }
 
 /*
@@ -277,6 +294,11 @@ static void stopTC1()
     // conf Comp Output Mode, "Normal"
     TCCR1A &= ~(1 << COM1A1);
     TCCR1A &= ~(1 << COM1A0); // COM0A = 0b00
+
+    // default timer registers
+    OCR1A = 0x0000;
+    OCR1B = 0x0000;
+    TCNT1 = 0x0000;
 }
 
 static void startTC2()
@@ -344,6 +366,7 @@ static void stopTC2()
     // default "Output Compare Register" Values
     OCR2A = 0x00;
     OCR2B = 0x00;
+    TCNT2 = 0x00;
 }
 
 static void start595()
@@ -361,7 +384,7 @@ static void start595()
     PORTD &= ~(1 << PORTD2); // set SRCLK low
 
     // zero out 595
-    output595(0x0000);
+    output595(0x00000);
 }
 
 /*
@@ -377,11 +400,11 @@ static void start595()
  * SER bit twiddle modified from:
  * https://graphics.stanford.edu/~seander/bithacks.html
  */
-static void output595(uint16_t output)
+static void output595(__uint24 output)
 {
-    PORTD &= ~(1 << PORTD3); // bring SCLK low
+    PORTD &= ~(1 << PORTD3); // bring SCLK 595 low
     
-    for(uint8_t i = 16; i; --i) // each bit in the vector
+    for(uint8_t i = 20; i; --i) // each bit in the vector
     {
         // SER 595 data to be shifted in
         PORTD ^= ((~(output & 1) + 1) ^ PORTD) & (1 << PORTD4);
@@ -391,13 +414,13 @@ static void output595(uint16_t output)
         PORTD &= ~(1 << PORTD2); // SRCLK 595 low
     }
 
-    PORTD |= (1 << PORTD3); // move to storage register, SCLK high
+    PORTD |= (1 << PORTD3); // bits to storage register, SCLK 595 high
 }
 
 static void stop595()
 {
     // zero out shift register
-    output595(0x0000);
+    output595(0x00000);
 
     // SER 595 low
     PORTD &=  ~(1 << PORTD4);
@@ -416,7 +439,9 @@ static void startBoost()
 {
     startADC5(); // start monitoring boost outut voltage
     startTC0(); // start pulsing inductor
+    _delay_ms(100);
     startTC1(); // start multiplier switching
+    _delay_ms(100);
 }
 
 static void stopBoost()
@@ -428,8 +453,9 @@ static void stopBoost()
 
 static void startRTC()
 {
-    set_system_time(1502281102 - UNIX_OFFSET);
+    set_system_time((uint32_t)1502393774 - UNIX_OFFSET);
     set_zone(-6 * ONE_HOUR);
+    set_dst(usa_dst);
 
     start595();
     startTC2();
@@ -441,6 +467,20 @@ static void stopRTC()
     stop595();
 }
 
+/*
+ * Variable uint8_t nixie[8], array index refers to an
+ * individual tube, value at index refers to the number displayed on
+ * that tube.
+ *
+ * Nixie tube 0: hours MSB
+ * Nixie tube 1: hours LSB
+ * Nixie tube 2: minutes MSB
+ * Nixie tube 3: minutes LSB
+ * Nixie tube 4: seconds MSB
+ * Nixie tube 5: seconds LSB
+ * Nixie tube 6: milliseconds MSB
+ * Nixie tube 7: milliseconds LSB
+ */
 int main(void)
 {
     init();
@@ -448,17 +488,50 @@ int main(void)
     startBoost();
     startRTC();
 
+    uint8_t hours = 0, minutes = 0, seconds = 0, _centiSeconds = 0;
+    uint8_t nixie[8] = {0};
     for(; ; ){
-        output595( (*timeKeeperStruct).tm_sec);
+        if(timeAvailable){
+            ATOMIC_BLOCK(ATOMIC_FORCEON){
+                timeAvailable = 0;
+                hours   = (*timeKeeperStruct).tm_hour;
+                minutes = (*timeKeeperStruct).tm_min;
+                seconds = (*timeKeeperStruct).tm_sec;
+            }
+
+            nixie[0] = hours / 10; // grab each digit
+            nixie[1] = hours % 10;
+            nixie[2] = minutes / 10;
+            nixie[3] = minutes % 10;
+            nixie[4] = seconds / 10;
+            nixie[5] = seconds % 10;
+        }
+
+        ATOMIC_BLOCK(ATOMIC_FORCEON)
+            _centiSeconds = 99 - centiSeconds;
+
+        nixie[6] = _centiSeconds / 10;
+        nixie[7] = _centiSeconds % 10; // nixie[] complete
+
+        // foreach nixie tube
+        for(uint8_t i = 0; i < NIXIE_TUBE_COUNT; ++i){
+            __uint24 output = (1UL << (i + 12)) |\
+                              (1 << (nixie[i] + 12));
+            output595(output);
+            _delay_us(NIXIE_ON_TIME_US);
+
+            if(NIXIE_DEAD_TIME_US){
+                output595(0x00000);
+                _delay_us(NIXIE_DEAD_TIME_US);
+            }
+        }
     }
-    
+
     stopBoost();
     stopRTC();
 
-    // TODO consider ADC trigger from TC2 overflow
     return 0;
 }
-
 /* 
  * Boost converter should sit at maximum allowed duty until duty needs
  * decreasing.
@@ -487,13 +560,24 @@ ISR(ADC_vect)
     TIFR0 |= (OCR0B);
 }
 
+/*
+ * Every time TC2 "overflows", 1 centisecond has passed, and this
+ * ISR is excuted.
+ * Once 1 cs have passed 100 times, 1 second has passed.
+ * When 1 second passes, reset the cs timer, and update the time vars.
+ *
+ * Since timeKeeper and timeKeeperStruct* are updated in this ISR,
+ * it may be wise to ensure atomic access to the time vars in threads
+ * from main.
+ */
 ISR(TIMER2_COMPA_vect)
 {
-    if(!--centiSeconds) {
-        centiSeconds = 99;
-        system_tick(); // called at 1 Hz
-        time(&timeKeeper);
-        timeKeeperStruct = localtime(&timeKeeper);
+    if(!--centiSeconds) { // if one second has passed
+        timeAvailable = 1;
+        centiSeconds = 99; // reset timer to "100"
+        system_tick(); // notify time.h that 1 second passed
+        time(&timeKeeper); // update timeKeeper with new time
+        timeKeeperStruct = localtime(&timeKeeper); // update struct
     }
 }
 
