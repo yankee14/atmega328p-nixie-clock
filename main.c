@@ -13,8 +13,8 @@
 #define TOP_TC2 155
 
 #define NIXIE_TUBE_COUNT 8
-#define NIXIE_ON_TIME_US 100000
-#define NIXIE_DEAD_TIME_US 200000
+#define NIXIE_ON_TIME_US 500
+#define NIXIE_DEAD_TIME_US 500
 
 static void init();
 
@@ -453,12 +453,13 @@ static void stopBoost()
 
 static void startRTC()
 {
-    set_system_time((uint32_t)1502393774 - UNIX_OFFSET);
-    set_zone(-6 * ONE_HOUR);
-    set_dst(usa_dst);
+    set_system_time(0);
+    //set_zone(-6 * ONE_HOUR);
+    //set_dst(usa_dst);
 
     start595();
     startTC2();
+    _delay_ms(3000);
 }
 
 static void stopRTC()
@@ -494,12 +495,12 @@ int main(void)
         if(timeAvailable){
             ATOMIC_BLOCK(ATOMIC_FORCEON){
                 timeAvailable = 0;
-                hours   = (*timeKeeperStruct).tm_hour;
-                minutes = (*timeKeeperStruct).tm_min;
-                seconds = (*timeKeeperStruct).tm_sec;
+                hours = (uint8_t)(*timeKeeperStruct).tm_hour;
+                minutes = (uint8_t)(*timeKeeperStruct).tm_min;
+                seconds = (uint8_t)(*timeKeeperStruct).tm_sec;
             }
 
-            nixie[0] = hours / 10; // grab each digit
+            nixie[0] = hours / 10;
             nixie[1] = hours % 10;
             nixie[2] = minutes / 10;
             nixie[3] = minutes % 10;
@@ -507,23 +508,23 @@ int main(void)
             nixie[5] = seconds % 10;
         }
 
-        ATOMIC_BLOCK(ATOMIC_FORCEON)
-            _centiSeconds = 99 - centiSeconds;
+        _centiSeconds = 99 - centiSeconds;
 
         nixie[6] = _centiSeconds / 10;
-        nixie[7] = _centiSeconds % 10; // nixie[] complete
+        nixie[7] = _centiSeconds % 10;
 
-        // foreach nixie tube
         for(uint8_t i = 0; i < NIXIE_TUBE_COUNT; ++i){
-            __uint24 output = (1UL << (i + 12)) |\
-                              (1 << (nixie[i] + 12));
-            output595(output);
-            _delay_us(NIXIE_ON_TIME_US);
+           output595( (__uint24)1 << (i + 12) |\
+                      (__uint24)1 << (nixie[i] + 2) );
 
-            if(NIXIE_DEAD_TIME_US){
-                output595(0x00000);
-                _delay_us(NIXIE_DEAD_TIME_US);
-            }
+#if NIXIE_ON_TIME_US            
+            _delay_us(NIXIE_ON_TIME_US);
+#endif
+
+#if NIXIE_DEAD_TIME_US
+            output595(0x00000);
+            _delay_us(NIXIE_DEAD_TIME_US);
+#endif
         }
     }
 
@@ -548,9 +549,9 @@ ISR(ADC_vect)
     const uint16_t adc = ADC;
 
     if(adc < 800){// if under maximum allowable voltage
-        if((OCR0B > 9) && (adc < 650)) // if duty lt 90% && V < 36
+        if((OCR0B > 9) && (adc < 640)) // if duty lt 90% && V < 36
             OCR0B--;// raise the duty cycle 
-        else if((OCR0B < TOP_TC0) && (adc > 650)) // otherwise
+        else if((OCR0B < TOP_TC0) && (adc > 640)) // otherwise
             OCR0B++;// lower the duty cycle
     }
     else                    // otherwise
