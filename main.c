@@ -12,9 +12,11 @@
 #define TOP_TC0 99
 #define TOP_TC2 155
 
+#define TC1_DIFF 0x7
+
 #define NIXIE_TUBE_COUNT 8
 #define NIXIE_ON_TIME_US 500
-#define NIXIE_DEAD_TIME_US 500
+#define NIXIE_DEAD_TIME_US 5
 
 static void init();
 
@@ -243,10 +245,10 @@ static void startTC1()
     DDRB &= ~(1 << DDB1);
 
     // clear
-    OCR1A = 0x60;
+    OCR1A = 0x80 - TC1_DIFF;
 
     // set
-    OCR1B = 0xA0;
+    OCR1B = 0x80 + TC1_DIFF;
 
     // Wave Generation Mode, "PCPWM, 8-bit"
     TCCR1B &= ~(1 << WGM13);
@@ -457,9 +459,11 @@ static void startRTC()
     //set_zone(-6 * ONE_HOUR);
     //set_dst(usa_dst);
 
+    centiSeconds = 99;
+
     start595();
-    startTC2();
     _delay_ms(3000);
+    startTC2();
 }
 
 static void stopRTC()
@@ -517,7 +521,7 @@ int main(void)
            output595( (__uint24)1 << (i + 12) |\
                       (__uint24)1 << (nixie[i] + 2) );
 
-#if NIXIE_ON_TIME_US            
+#if NIXIE_ON_TIME_US
             _delay_us(NIXIE_ON_TIME_US);
 #endif
 
@@ -574,10 +578,10 @@ ISR(ADC_vect)
 ISR(TIMER2_COMPA_vect)
 {
     if(!--centiSeconds) { // if one second has passed
-        timeAvailable = 1;
-        centiSeconds = 99; // reset timer to "100"
         system_tick(); // notify time.h that 1 second passed
+        timeAvailable = 1;
         time(&timeKeeper); // update timeKeeper with new time
+        centiSeconds = 99; // reset timer to "100"
         timeKeeperStruct = localtime(&timeKeeper); // update struct
     }
 }
